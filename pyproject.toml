@@ -1,7 +1,7 @@
 [project]
 name = "LNR-HELPER"
 description = "Helpful things"
-version = "1.0.0"
+version = "1.0.2"
 license = "MIT" 
 # classifiers = [
 #     # For OS-independent nodes (works on all operating systems)
@@ -23,10 +23,10 @@ license = "MIT"
 dependencies = []
 
 [project.urls]
-Repository = "https://github.com/Comfy-Org/ComfyUI"
+Repository = "https://github.com/NiklasNK-Creator/LNR-HELPER"
 #  Used by Comfy Registry https://registry.comfy.org
-Documentation = "https://github.com/Comfy-Org/ComfyUI/wiki"
-"Bug Tracker" = "https://github.com/Comfy-Org/ComfyUI/issues"
+Documentation = "https://github.com/NiklasNK-Creator/LNR-HELPER/wiki"
+"Bug Tracker" = "https://github.com/NiklasNK-Creator/LNR-HELPER/issues"
 
 [tool.comfy]
 PublisherId = "lunar"
