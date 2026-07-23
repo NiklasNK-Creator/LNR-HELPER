@@ -185,7 +185,7 @@ def _flatten(lst):
 class LNR_ImageListToShape:
     """Converts a list/batch of images into a single batched image tensor (shape)."""
 
-    CATEGORY = "LNR_HELPER"
+    CATEGORY = "LNR_HELPER/Utilities"
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("image",)
     FUNCTION = "convert"
@@ -254,7 +254,7 @@ class LNR_LoadImage:
     """Load an image from a file path and extract its generation metadata.
     Only runs when a value is received on the trigger input from another node."""
 
-    CATEGORY = "LNR_HELPER"
+    CATEGORY = "LNR_HELPER/Image"
     RETURN_TYPES = ("IMAGE", "STRING", "STRING")
     RETURN_NAMES = ("image", "metadata", "name")
     FUNCTION = "load_image"
@@ -309,7 +309,7 @@ class LNR_LoadImage:
 class LNR_IntToString:
     """Convert an integer to a string."""
 
-    CATEGORY = "LNR_HELPER"
+    CATEGORY = "LNR_HELPER/Utilities"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("string",)
     FUNCTION = "convert"
@@ -329,7 +329,7 @@ class LNR_IntToString:
 class LNR_CivitaiPostImage:
     """Post image to Civitai with API key and optional metadata override."""
 
-    CATEGORY = "LNR_HELPER"
+    CATEGORY = "LNR_HELPER/Civitai"
     RETURN_TYPES = ("INT", "STRING")
     RETURN_NAMES = ("post_id", "post_url")
     FUNCTION = "post_image"
@@ -415,7 +415,7 @@ class LNR_CivitaiPostImage:
 class LNR_SaveImage:
     """Save an image to disk with auto-incrementing index. Shows image preview."""
 
-    CATEGORY = "LNR_HELPER"
+    CATEGORY = "LNR_HELPER/Image"
     RETURN_TYPES = ("IMAGE", "STRING")
     RETURN_NAMES = ("image", "output_path")
     FUNCTION = "save_image"
@@ -555,7 +555,7 @@ def _parse_a1111_metadata(metadata_str):
 class LNR_LoadImageAndMetadata:
     """Load image and extract all generation metadata: prompt, settings, LoRAs, model."""
 
-    CATEGORY = "LNR_HELPER"
+    CATEGORY = "LNR_HELPER/Image"
     RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING", "STRING", "INT", "INT", "FLOAT", "INT", "INT", "INT")
     RETURN_NAMES = ("image", "prompt", "negative_prompt", "model", "lora_string", "steps", "seed", "cfg", "width", "height", "sampler")
     FUNCTION = "load"
@@ -618,7 +618,7 @@ class LNR_LoadImageAndMetadata:
 class LNR_MetadataEditor:
     """Edit prompt, negative prompt, and generation settings. Output as A1111 params string and JSON."""
 
-    CATEGORY = "LNR_HELPER"
+    CATEGORY = "LNR_HELPER/Metadata"
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("metadata_string", "metadata_json")
     FUNCTION = "edit"
@@ -695,7 +695,7 @@ class LNR_MetadataEditor:
 class LNR_SaveImageWithMetadata:
     """Save image to disk with A1111 parameters and workflow embedded in PNG metadata."""
 
-    CATEGORY = "LNR_HELPER"
+    CATEGORY = "LNR_HELPER/Metadata"
     RETURN_TYPES = ("IMAGE", "STRING", "STRING")
     RETURN_NAMES = ("image", "output_path", "metadata_json")
     FUNCTION = "save"
@@ -770,7 +770,7 @@ class LNR_SaveImageWithMetadata:
 class LNR_ExtractResources:
     """Extract LoRAs and checkpoints from an image's embedded metadata. Search Civitai for modelVersionIds."""
 
-    CATEGORY = "LNR_HELPER"
+    CATEGORY = "LNR_HELPER/Metadata"
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "INT")
     RETURN_NAMES = ("lora_string", "checkpoint", "model_version_ids", "all_loras_json", "resource_count")
     FUNCTION = "extract"
