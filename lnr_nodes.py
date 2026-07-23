@@ -294,6 +294,10 @@ class LNR_LoadImage:
             metadata_str = metadata_str + "\n\nWorkflow:\n" + json.dumps(workflow, indent=2)
 
         img_tensor = _pil_to_tensor(pil_img)
+        img_tensor.info = {
+            "metadata": metadata_str,
+            "parsed": _parse_a1111_metadata(metadata_str),
+        }
 
         print(f"[LNR Load Image] Loaded {name}.{format} ({pil_img.size[0]}x{pil_img.size[1]})")
         if metadata_str:
@@ -456,12 +460,396 @@ class LNR_SaveImage:
         return {"ui": ui, "result": (image, filepath,)}
 
 
+def _parse_a1111_metadata(metadata_str):
+    """Parse A1111-format metadata string into a dict with all fields."""
+    if not metadata_str or not isinstance(metadata_str, str):
+        return {}
+
+    meta = metadata_str.strip()
+
+    prompt = ""
+    negative = ""
+    params_line = meta
+
+    neg_idx = meta.lower().find("\nnegative prompt:")
+    if neg_idx != -1:
+        prompt = meta[:neg_idx].strip()
+        rest = meta[neg_idx:].strip()
+        neg_m = re.match(r"Negative prompt:\s*(.*)", rest, re.IGNORECASE | re.DOTALL)
+        if neg_m:
+            negative = neg_m.group(1).strip()
+            comma_idx = negative.rfind(",")
+            if comma_idx != -1:
+                last_part = negative[comma_idx + 1:].strip()
+                if re.match(r"^[\w\s]+:", last_part):
+                    params_line = last_part
+                    negative = negative[:comma_idx].strip()
+    else:
+        prompt = meta
+
+    out = {"prompt": prompt, "negative": negative}
+
+    sm = re.search(r"Steps:\s*(\d+)", meta)
+    if sm:
+        out["steps"] = int(sm.group(1))
+
+    sm = re.search(r"Sampler:\s*([^\s,]+(?:\s+\w+)?)", meta)
+    if sm:
+        s = sm.group(1).strip()
+        parts = s.split()
+        out["sampler"] = parts[0]
+        if len(parts) > 1:
+            out["scheduler"] = " ".join(parts[1:])
+
+    sm = re.search(r"CFG scale:\s*([\d.]+)", meta)
+    if sm:
+        out["cfg"] = float(sm.group(1))
+
+    sm = re.search(r"Seed:\s*(\d+)", meta)
+    if sm:
+        out["seed"] = int(sm.group(1))
+
+    sm = re.search(r"Size:\s*(\d+)x(\d+)", meta)
+    if sm:
+        out["width"] = int(sm.group(1))
+        out["height"] = int(sm.group(2))
+
+    sm = re.search(r"Model:\s*([^\s,]+)", meta)
+    if sm:
+        out["model"] = sm.group(1)
+
+    sm = re.search(r"Model hash:\s*([0-9a-fA-F]+)", meta)
+    if sm:
+        out["model_hash"] = sm.group(1)
+
+    lora_list = []
+    for match in _LORA_RE.finditer(meta):
+        name = match.group(1)
+        weight = 1.0
+        if match.group(2):
+            try:
+                weight = float(match.group(2).split(":")[0])
+            except (ValueError, TypeError):
+                weight = 1.0
+        lora_list.append({"name": name, "weight": weight})
+
+    lora_hashes_m = re.search(r'Lora hashes:\s*"([^"]+)"', meta)
+    if lora_hashes_m:
+        for entry in lora_hashes_m.group(1).split(","):
+            entry = entry.strip()
+            hparts = entry.split(":")
+            if len(hparts) == 2:
+                hname = hparts[0].strip()
+                hhash = hparts[1].strip()
+                for lora in lora_list:
+                    if lora["name"].lower() == hname.lower():
+                        lora["hash"] = hhash
+                        break
+
+    out["loras"] = lora_list
+    out["lora_strings"] = " ".join(f"<lora:{l['name']}:{l['weight']}>" for l in lora_list)
+
+    return out
+
+
+class LNR_LoadImageAndMetadata:
+    """Load image and extract all generation metadata: prompt, settings, LoRAs, model."""
+
+    CATEGORY = "LNR_HELPER"
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING", "STRING", "INT", "INT", "FLOAT", "INT", "INT", "INT")
+    RETURN_NAMES = ("image", "prompt", "negative_prompt", "model", "lora_string", "steps", "seed", "cfg", "width", "height", "sampler")
+    FUNCTION = "load"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "path": ("STRING", {"default": "", "multiline": False}),
+                "name": ("STRING", {"default": "", "multiline": False}),
+            },
+            "optional": {
+                "format": (["png", "jpg", "jpeg", "webp"], {"default": "png"}),
+                "trigger": ("*", {"forceInput": True, "tooltip": "Connect anything to trigger loading."}),
+            },
+        }
+
+    def load(self, path, name, format="png", trigger=None):
+        if trigger is None:
+            zeros = (torch.zeros(1, 1, 1, 3), "", "", "", "", 20, 0, 7.0, 512, 512, 0)
+            return zeros
+
+        path = path.strip() if isinstance(path, str) else ""
+        name = name.strip() if isinstance(name, str) else ""
+        if not path or not name:
+            raise ValueError("LNR Load Image & Metadata: 'path' and 'name' are required.")
+
+        filepath = os.path.join(path, f"{name}.{format}")
+        if not os.path.isfile(filepath):
+            raise FileNotFoundError(f"LNR Load Image & Metadata: File not found: {filepath}")
+
+        pil_img, metadata_str, _ = _read_image_metadata(filepath)
+        img_tensor = _pil_to_tensor(pil_img)
+
+        meta = _parse_a1111_metadata(metadata_str)
+        img_tensor.info = {
+            "metadata": metadata_str,
+            "parsed": meta,
+        }
+
+        print(f"[LNR Load Image & Metadata] Loaded {name}.{format} ({pil_img.size[0]}x{pil_img.size[1]})")
+        if meta.get("loras"):
+            print(f"[LNR Load Image & Metadata] Found {len(meta['loras'])} LoRA(s): {meta['lora_strings']}")
+
+        return (
+            img_tensor,
+            meta.get("prompt", ""),
+            meta.get("negative", ""),
+            meta.get("model", ""),
+            meta.get("lora_strings", ""),
+            meta.get("steps", 20),
+            meta.get("seed", 0),
+            meta.get("cfg", 7.0),
+            meta.get("width", pil_img.size[0]),
+            meta.get("height", pil_img.size[1]),
+            meta.get("sampler", 0),
+        )
+
+
+class LNR_MetadataEditor:
+    """Edit prompt, negative prompt, and generation settings. Output as A1111 params string and JSON."""
+
+    CATEGORY = "LNR_HELPER"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("metadata_string", "metadata_json")
+    FUNCTION = "edit"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {"default": "", "multiline": True}),
+                "negative_prompt": ("STRING", {"default": "", "multiline": True}),
+            },
+            "optional": {
+                "model": ("STRING", {"default": "", "multiline": False}),
+                "lora_string": ("STRING", {"default": "", "multiline": False, "tooltip": "e.g. <lora:name:1.0> <lora:name2:0.8>"}),
+                "sampler": (["euler", "euler_ancestral", "heun", "dpm_2", "dpm_2_ancestral", "dpmpp_2s_ancestral", "dpmpp_2m", "dpmpp_sde", "dpmpp_2m_sde", "dpmpp_3m_sde", "ddim", "lcm", "res_multistep"], {"default": "euler"}),
+                "scheduler": (["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform", "beta"], {"default": "normal"}),
+                "steps": ("INT", {"default": 20, "min": 1, "max": 200}),
+                "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "width": ("INT", {"default": 512, "min": 1, "max": 8192}),
+                "height": ("INT", {"default": 512, "min": 1, "max": 8192}),
+            },
+        }
+
+    def edit(self, prompt, negative_prompt, model="", lora_string="",
+             sampler="euler", scheduler="normal", steps=20, cfg=7.0, seed=0,
+             width=512, height=512):
+        sampler_display = sampler
+        if scheduler and scheduler.lower() not in ("normal", ""):
+            sampler_display = f"{sampler} {scheduler}"
+
+        params_parts = []
+        if steps:
+            params_parts.append(f"Steps: {steps}")
+        if sampler_display:
+            params_parts.append(f"Sampler: {sampler_display}")
+        if cfg:
+            params_parts.append(f"CFG scale: {cfg}")
+        if seed is not None:
+            params_parts.append(f"Seed: {int(seed)}")
+        if width and height:
+            params_parts.append(f"Size: {int(width)}x{int(height)}")
+        if model:
+            params_parts.append(f"Model: {model.strip()}")
+        params_parts.append("Version: ComfyUI")
+
+        params_line = ", ".join(params_parts)
+        prompt_clean = prompt.strip() if isinstance(prompt, str) else ""
+        negative_clean = negative_prompt.strip() if isinstance(negative_prompt, str) else ""
+        metadata_str = f"{prompt_clean}\nNegative prompt: {negative_clean}\n{params_line}"
+
+        if lora_string.strip():
+            metadata_str += f"\n{lora_string.strip()}"
+
+        loras = _parse_loras(lora_string) if lora_string.strip() else []
+
+        metadata_json = json.dumps({
+            "prompt": prompt_clean,
+            "negative": negative_clean,
+            "model": model.strip(),
+            "loras": [{"name": n, "weight": w} for n, w in loras],
+            "sampler": sampler,
+            "scheduler": scheduler,
+            "steps": steps,
+            "cfg": cfg,
+            "seed": seed,
+            "width": width,
+            "height": height,
+        }, indent=2)
+
+        return (metadata_str, metadata_json)
+
+
+class LNR_SaveImageWithMetadata:
+    """Save image to disk with A1111 parameters and workflow embedded in PNG metadata."""
+
+    CATEGORY = "LNR_HELPER"
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING")
+    RETURN_NAMES = ("image", "output_path", "metadata_json")
+    FUNCTION = "save"
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "filename": ("STRING", {"default": "image", "multiline": False}),
+                "metadata": ("STRING", {"default": "", "multiline": True, "forceInput": True, "tooltip": "A1111 params string to embed as PNG parameters"}),
+            },
+            "optional": {
+                "output_path": ("STRING", {"default": "", "multiline": False}),
+                "workflow_json": ("STRING", {"default": "", "multiline": True, "forceInput": True, "tooltip": "Workflow JSON to embed in PNG"}),
+                "file_format": (["png", "jpg"], {"default": "png"}),
+                "jpg_quality": ("INT", {"default": 95, "min": 1, "max": 100}),
+            },
+        }
+
+    def save(self, image, filename, metadata, output_path="", workflow_json="",
+             file_format="png", jpg_quality=95):
+        import folder_paths
+
+        filename = filename.strip() if isinstance(filename, str) else "image"
+        output_path = output_path.strip() if isinstance(output_path, str) else ""
+        if not output_path:
+            output_path = folder_paths.get_output_directory()
+
+        os.makedirs(output_path, exist_ok=True)
+
+        base = os.path.join(output_path, filename)
+        idx = 0
+        ext = file_format if file_format in ("png", "jpg") else "png"
+        filepath = f"{base}.{ext}"
+        while os.path.exists(filepath):
+            idx += 1
+            filepath = f"{base}_{idx}.{ext}"
+
+        single_img = image[0] if len(image.shape) == 4 else image
+        pil_img = _tensor_to_pil(single_img)
+
+        pnginfo = PngInfo()
+        meta_str = metadata.strip() if isinstance(metadata, str) else ""
+        if meta_str:
+            pnginfo.add_text("parameters", meta_str)
+
+        workflow_str = workflow_json.strip() if isinstance(workflow_json, str) else ""
+        if workflow_str:
+            try:
+                wf = json.loads(workflow_str) if isinstance(workflow_str, str) else workflow_str
+                pnginfo.add_text("workflow", json.dumps(wf))
+            except Exception:
+                pnginfo.add_text("workflow", workflow_str)
+
+        save_args = {"pnginfo": pnginfo}
+        if ext == "jpg":
+            pil_img.save(filepath, format="JPEG", quality=jpg_quality, **save_args)
+        else:
+            pil_img.save(filepath, format="PNG", **save_args)
+
+        meta = _parse_a1111_metadata(meta_str) if meta_str else {}
+        meta_json = json.dumps(meta, indent=2) if meta else "{}"
+
+        print(f"[LNR Save Image + Metadata] Saved: {filepath} ({ext}, metadata={len(meta_str)} chars)")
+
+        ui = {"images": [{"filename": os.path.basename(filepath), "subfolder": "", "type": "output"}]}
+        return {"ui": ui, "result": (image, filepath, meta_json)}
+
+
+class LNR_ExtractResources:
+    """Extract LoRAs and checkpoints from an image's embedded metadata. Search Civitai for modelVersionIds."""
+
+    CATEGORY = "LNR_HELPER"
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "INT")
+    RETURN_NAMES = ("lora_string", "checkpoint", "model_version_ids", "all_loras_json", "resource_count")
+    FUNCTION = "extract"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE", {"tooltip": "Image with embedded metadata (from LNR Load Image or LNR Load Image + Metadata)"}),
+            },
+            "optional": {
+                "api_key": ("STRING", {"default": "", "multiline": False}),
+                "metadata": ("STRING", {"default": "", "multiline": True, "forceInput": True, "tooltip": "Fallback: provide metadata string directly if image has no .info"}),
+            },
+        }
+
+    def extract(self, image, api_key="", metadata=""):
+        meta = {}
+
+        single_img = image[0] if len(image.shape) == 4 else image
+        if hasattr(single_img, "info") and isinstance(single_img.info, dict):
+            if "parsed" in single_img.info and isinstance(single_img.info["parsed"], dict):
+                meta = single_img.info["parsed"]
+            elif "metadata" in single_img.info:
+                meta = _parse_a1111_metadata(single_img.info["metadata"])
+
+        if not meta and metadata.strip():
+            meta = _parse_a1111_metadata(metadata.strip())
+
+        loras = meta.get("loras", [])
+        model = meta.get("model", "")
+        api_key_str = api_key.strip() if isinstance(api_key, str) else ""
+
+        lora_strings = []
+        version_ids = []
+
+        for lora in loras:
+            name = lora["name"]
+            weight = lora["weight"]
+
+            vid = None
+            if api_key_str:
+                vid = _search_civitai_model(name, api_key_str, "LORA")
+
+            lora_strings.append(f"<lora:{name}:{weight}>")
+            if vid:
+                version_ids.append(vid)
+
+        checkpoint_vid = None
+        if model and api_key_str:
+            checkpoint_vid = _search_civitai_model(model, api_key_str, "Checkpoint")
+            if checkpoint_vid:
+                version_ids.append(checkpoint_vid)
+
+        vid_str = ",".join(str(v) for v in version_ids) if version_ids else ""
+        lora_str = " ".join(lora_strings) if lora_strings else ""
+
+        all_loras_json = json.dumps([
+            {"name": l["name"], "weight": l["weight"], "hash": l.get("hash", "")}
+            for l in loras
+        ], indent=2) if loras else "[]"
+
+        print(f"[LNR Extract Resources] {len(loras)} LoRA(s), model: {model or 'N/A'}")
+        if version_ids:
+            print(f"[LNR Extract Resources] Civitai version IDs: {vid_str}")
+
+        return (lora_str, model, vid_str, all_loras_json, len(loras) + (1 if model else 0))
+
+
 NODE_CLASS_MAPPINGS = {
     "LNR_ImageListToShape": LNR_ImageListToShape,
     "LNR_LoadImage": LNR_LoadImage,
     "LNR_IntToString": LNR_IntToString,
     "LNR_CivitaiPostImage": LNR_CivitaiPostImage,
     "LNR_SaveImage": LNR_SaveImage,
+    "LNR_LoadImageAndMetadata": LNR_LoadImageAndMetadata,
+    "LNR_MetadataEditor": LNR_MetadataEditor,
+    "LNR_SaveImageWithMetadata": LNR_SaveImageWithMetadata,
+    "LNR_ExtractResources": LNR_ExtractResources,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -470,4 +858,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "LNR_IntToString": "LNR Int to String",
     "LNR_CivitaiPostImage": "LNR Civitai Post Image",
     "LNR_SaveImage": "LNR Save Image",
+    "LNR_LoadImageAndMetadata": "LNR Load Image + Metadata",
+    "LNR_MetadataEditor": "LNR Metadata Editor",
+    "LNR_SaveImageWithMetadata": "LNR Save Image + Metadata",
+    "LNR_ExtractResources": "LNR Extract Resources",
 }
