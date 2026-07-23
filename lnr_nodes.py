@@ -615,6 +615,60 @@ class LNR_LoadImageAndMetadata:
         )
 
 
+class LNR_ExtractPromptsAndSettings:
+    """Extract prompt, negative prompt, and all generation settings from an image input."""
+
+    CATEGORY = "LNR_HELPER/Metadata"
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "INT", "INT", "FLOAT", "INT", "INT", "INT", "INT")
+    RETURN_NAMES = ("prompt", "negative_prompt", "model", "lora_string", "steps", "seed", "cfg", "width", "height", "sampler", "scheduler")
+    FUNCTION = "extract"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE", {"tooltip": "Image with embedded metadata (from LNR Load Image or LNR Load Image + Metadata)"}),
+            },
+            "optional": {
+                "metadata": ("STRING", {"default": "", "multiline": True, "forceInput": True, "tooltip": "Fallback: provide metadata string directly if image has no .info"}),
+            },
+        }
+
+    def extract(self, image, metadata=""):
+        meta = {}
+
+        single_img = image[0] if len(image.shape) == 4 else image
+        if hasattr(single_img, "info") and isinstance(single_img.info, dict):
+            if "parsed" in single_img.info and isinstance(single_img.info["parsed"], dict):
+                meta = single_img.info["parsed"]
+            elif "metadata" in single_img.info:
+                meta = _parse_a1111_metadata(single_img.info["metadata"])
+
+        if not meta and metadata.strip():
+            meta = _parse_a1111_metadata(metadata.strip())
+
+        loras = meta.get("loras", [])
+        lora_str = meta.get("lora_strings", "")
+
+        print(f"[LNR Extract Prompts & Settings] model: {meta.get('model', 'N/A')}, steps: {meta.get('steps', 'N/A')}, seed: {meta.get('seed', 'N/A')}")
+        if loras:
+            print(f"[LNR Extract Prompts & Settings] {len(loras)} LoRA(s): {lora_str}")
+
+        return (
+            meta.get("prompt", ""),
+            meta.get("negative", ""),
+            meta.get("model", ""),
+            lora_str,
+            meta.get("steps", 20),
+            meta.get("seed", 0),
+            meta.get("cfg", 7.0),
+            meta.get("width", 512),
+            meta.get("height", 512),
+            meta.get("sampler", 0),
+            meta.get("scheduler", 0),
+        )
+
+
 class LNR_MetadataEditor:
     """Edit prompt, negative prompt, and generation settings. Output as A1111 params string and JSON."""
 
@@ -850,6 +904,7 @@ NODE_CLASS_MAPPINGS = {
     "LNR_MetadataEditor": LNR_MetadataEditor,
     "LNR_SaveImageWithMetadata": LNR_SaveImageWithMetadata,
     "LNR_ExtractResources": LNR_ExtractResources,
+    "LNR_ExtractPromptsAndSettings": LNR_ExtractPromptsAndSettings,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -862,4 +917,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "LNR_MetadataEditor": "LNR Metadata Editor",
     "LNR_SaveImageWithMetadata": "LNR Save Image + Metadata",
     "LNR_ExtractResources": "LNR Extract Resources",
+    "LNR_ExtractPromptsAndSettings": "LNR Extract Prompts & Settings",
 }
